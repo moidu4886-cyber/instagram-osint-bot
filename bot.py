@@ -16,7 +16,20 @@ from pyrogram.errors import UserNotParticipant, ChannelInvalid
 from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv()
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+def run_web():
+    server = HTTPServer(("0.0.0.0", 8000), Handler)
+    server.serve_forever()
+
+threading.Thread(target=run_web).start()
 # ══════════════════════════════════════════════════════════════════════════════
 # CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
