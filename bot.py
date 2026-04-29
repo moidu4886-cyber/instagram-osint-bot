@@ -584,7 +584,7 @@ async def main():
     print("[Bot] Starting...")
     await app.start()
     print("[Bot] Running. Ctrl+C to stop.")
-    await app.idle()
+    await asyncio.Event().wait()
     await app.stop()
     await close_db()
 
