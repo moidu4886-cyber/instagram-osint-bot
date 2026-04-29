@@ -1,8 +1,3 @@
-“””
-Instagram OSINT & Analytics Bot
-Single-file version — drop this + .env into any folder and run.
-“””
-
 import asyncio
 import re
 import os
@@ -27,7 +22,7 @@ self.send_response(200)
 self.end_headers()
 self.wfile.write(b”Bot is running”)
 def log_message(self, format, *args):
-pass  # suppress access logs
+pass
 
 def run_web():
 server = HTTPServer((“0.0.0.0”, 8000), Handler)
@@ -35,11 +30,7 @@ server.serve_forever()
 
 threading.Thread(target=run_web, daemon=True).start()
 
-# ══════════════════════════════════════════════════════════════════════════════
-
 # CONFIG
-
-# ══════════════════════════════════════════════════════════════════════════════
 
 BOT_TOKEN          = os.getenv(“BOT_TOKEN”)
 API_ID             = int(os.getenv(“API_ID”, 0))
@@ -53,11 +44,7 @@ RAPIDAPI_KEY       = os.getenv(“RAPIDAPI_KEY”, “”)
 RAPIDAPI_HOST      = os.getenv(“RAPIDAPI_HOST”, “instagram-data1.p.rapidapi.com”)
 FREE_SEARCH_LIMIT  = 1
 
-# ══════════════════════════════════════════════════════════════════════════════
-
 # DATABASE
-
-# ══════════════════════════════════════════════════════════════════════════════
 
 _mongo_client = None
 _db = None
@@ -138,17 +125,9 @@ await searches_col().insert_one({
 “result_summary”: result_summary,
 })
 
-# ══════════════════════════════════════════════════════════════════════════════
-
-# INSTAGRAM SCRAPER — FIXED
-
-# ══════════════════════════════════════════════════════════════════════════════
+# INSTAGRAM SCRAPER
 
 def _scrape_instaloader(username):
-“””
-Attempt to scrape via instaloader with a short delay to reduce rate-limit risk.
-Returns profile dict or None on any failure.
-“””
 L = instaloader.Instaloader(
 download_pictures=False,
 download_videos=False,
@@ -160,27 +139,25 @@ compress_json=False,
 quiet=True,
 )
 try:
-time.sleep(1)  # small delay to reduce Instagram rate-limiting
+time.sleep(1)
 profile = instaloader.Profile.from_username(L.context, username)
+posts_data = []
+try:
+for i, post in enumerate(profile.get_posts()):
+if i >= 10:
+break
+posts_data.append({
+“shortcode”: post.shortcode,
+“likes”: post.likes,
+“comments”: post.comments,
+“url”: “https://www.instagram.com/p/” + post.shortcode + “/”,
+“caption”: (post.caption or “”)[:100],
+})
+time.sleep(0.5)
+except Exception as post_err:
+print(”[Instaloader] Posts fetch warning: “ + str(post_err))
 
 ```
-    posts_data = []
-    try:
-        for i, post in enumerate(profile.get_posts()):
-            if i >= 10:
-                break
-            posts_data.append({
-                "shortcode": post.shortcode,
-                "likes": post.likes,
-                "comments": post.comments,
-                "url": f"https://www.instagram.com/p/{post.shortcode}/",
-                "caption": (post.caption or "")[:100],
-            })
-            time.sleep(0.5)  # avoid hammering Instagram
-    except Exception as post_err:
-        print(f"[Instaloader] Posts fetch warning: {post_err}")
-        # Continue with empty posts — profile data is still useful
-
     avg_likes    = round(sum(p["likes"]    for p in posts_data) / len(posts_data), 1) if posts_data else 0
     avg_comments = round(sum(p["comments"] for p in posts_data) / len(posts_data), 1) if posts_data else 0
 
@@ -201,18 +178,16 @@ profile = instaloader.Profile.from_username(L.context, username)
         "avg_comments": avg_comments,
     }
 except instaloader.exceptions.ProfileNotExistsException:
-    print(f"[Instaloader] Profile not found: {username}")
     return None
 except instaloader.exceptions.ConnectionException as e:
-    print(f"[Instaloader] Connection/rate-limit error: {e}")
+    print("[Instaloader] Connection error: " + str(e))
     return None
 except Exception as e:
-    print(f"[Instaloader] Unexpected error: {e}")
+    print("[Instaloader] Error: " + str(e))
     return None
 ```
 
 def _scrape_rapidapi(username):
-“”“Fallback scraper using RapidAPI.”””
 if not RAPIDAPI_KEY:
 return None
 try:
@@ -221,7 +196,7 @@ headers = {
 “X-RapidAPI-Host”: RAPIDAPI_HOST,
 }
 resp = requests.get(
-f”https://{RAPIDAPI_HOST}/v1/info”,
+“https://” + RAPIDAPI_HOST + “/v1/info”,
 headers=headers,
 params={“username”: username},
 timeout=10,
@@ -229,7 +204,7 @@ timeout=10,
 if resp.status_code == 404:
 return None
 if resp.status_code != 200:
-print(f”[RapidAPI] HTTP {resp.status_code}”)
+print(”[RapidAPI] HTTP “ + str(resp.status_code))
 return None
 
 ```
@@ -247,7 +222,7 @@ return None
             "shortcode": sc,
             "likes": n.get("edge_liked_by", {}).get("count", 0),
             "comments": n.get("edge_media_to_comment", {}).get("count", 0),
-            "url": f"https://www.instagram.com/p/{sc}/",
+            "url": "https://www.instagram.com/p/" + sc + "/",
             "caption": "",
         })
 
@@ -271,28 +246,23 @@ return None
         "avg_comments": avg_comments,
     }
 except Exception as e:
-    print(f"[RapidAPI] Error: {e}")
+    print("[RapidAPI] Error: " + str(e))
     return None
 ```
 
 def fetch_instagram_profile(username):
-“”“Try instaloader first, fall back to RapidAPI.”””
 username = username.lstrip(”@”).strip().lower()
 result = _scrape_instaloader(username)
 if result is None:
-print(f”[Scraper] Instaloader failed for {username}, trying RapidAPI…”)
+print(”[Scraper] Instaloader failed for “ + username + “, trying RapidAPI…”)
 result = _scrape_rapidapi(username)
 return result
 
-# ══════════════════════════════════════════════════════════════════════════════
-
 # FAKE DETECTOR
-
-# ══════════════════════════════════════════════════════════════════════════════
 
 BOT_PHRASES = [
 “great pic”, “nice photo”, “love this”, “amazing”, “follow me”, “check my page”,
-“dm me”, “follow back”, “f4f”, “nice”, “cool”, “wow”, “🔥”, “❤️”, “👏”, “💯”, “🙌”
+“dm me”, “follow back”, “f4f”, “nice”, “cool”, “wow”,
 ]
 
 def engagement_rate(followers, avg_likes, avg_comments):
@@ -301,17 +271,21 @@ return 0.0
 return round((avg_likes + avg_comments) / followers * 100, 2)
 
 def engagement_label(rate):
-if rate >= 3:  return “✅ Healthy”
-if rate >= 1:  return “⚠️ Average”
-return             “🚨 Suspicious”
+if rate >= 3:
+return “Healthy”
+if rate >= 1:
+return “Average”
+return “Suspicious”
 
 def like_ratio_verdict(followers, avg_likes):
 if not followers:
 return “N/A”
 r = avg_likes / followers * 100
-if r >= 1:   return f”✅ Normal ({r:.2f}%)”
-if r >= 0.2: return f”⚠️ Low ({r:.2f}%)”
-return           f”🚨 Very Low — Fake Risk ({r:.2f}%)”
+if r >= 1:
+return “Normal (” + str(round(r, 2)) + “%)”
+if r >= 0.2:
+return “Low (” + str(round(r, 2)) + “%)”
+return “Very Low - Fake Risk (” + str(round(r, 2)) + “%)”
 
 def comment_verdict(posts):
 captions = [p.get(“caption”, “”) for p in posts if p.get(“caption”)]
@@ -319,9 +293,11 @@ if not captions:
 return “No captions to analyse”
 bots = sum(1 for c in captions if any(ph in c.lower() for ph in BOT_PHRASES))
 pct = round(bots / len(captions) * 100, 1)
-if pct >= 60: return f”🚨 High bot activity ({pct}%)”
-if pct >= 30: return f”⚠️ Moderate bot activity ({pct}%)”
-return            f”✅ Looks organic ({pct}%)”
+if pct >= 60:
+return “High bot activity (” + str(pct) + “%)”
+if pct >= 30:
+return “Moderate bot activity (” + str(pct) + “%)”
+return “Looks organic (” + str(pct) + “%)”
 
 def run_fake_analysis(profile):
 f = profile.get(“followers”, 0)
@@ -335,11 +311,7 @@ return {
 “comment”: comment_verdict(profile.get(“posts”, [])),
 }
 
-# ══════════════════════════════════════════════════════════════════════════════
-
 # CROSS-PLATFORM CHECK
-
-# ══════════════════════════════════════════════════════════════════════════════
 
 PLATFORMS = {
 “Twitter/X”: “https://twitter.com/{u}”,
@@ -357,53 +329,46 @@ url = tmpl.format(u=username)
 try:
 r = requests.get(url, headers=_HEADERS, timeout=6, allow_redirects=True)
 if r.status_code == 200:
-status = “🟢 Found”
+status = “Found”
 elif r.status_code == 404:
-status = “⚪ Not Found”
+status = “Not Found”
 else:
-status = f”🟡 {r.status_code}”
+status = str(r.status_code)
 except Exception:
-status = “🔴 Error”
+status = “Error”
 results.append({“name”: name, “url”: url, “status”: status})
 return results
 
-# ══════════════════════════════════════════════════════════════════════════════
-
 # KEYBOARDS
-
-# ══════════════════════════════════════════════════════════════════════════════
 
 def kb_join():
 ch = FORCE_JOIN_CHANNEL.lstrip(”@”)
-return InlineKeyboardMarkup([[InlineKeyboardButton(“📢 Join Channel”, url=f”https://t.me/{ch}”)]])
+return InlineKeyboardMarkup([[InlineKeyboardButton(“Join Channel”, url=“https://t.me/” + ch)]])
 
 def kb_admin():
 admin = ADMIN_USERNAME.lstrip(”@”)
-return InlineKeyboardMarkup([[InlineKeyboardButton(“💎 Upgrade to Pro”, url=f”https://t.me/{admin}”)]])
+return InlineKeyboardMarkup([[InlineKeyboardButton(“Upgrade to Pro”, url=“https://t.me/” + admin)]])
 
 def kb_report(pic_url):
 admin = ADMIN_USERNAME.lstrip(”@”)
-lens  = f”https://lens.google.com/uploadbyurl?url={pic_url}”
+lens  = “https://lens.google.com/uploadbyurl?url=” + pic_url
 return InlineKeyboardMarkup([
-[InlineKeyboardButton(“🔍 Reverse Image Search”, url=lens)],
-[InlineKeyboardButton(“💎 Upgrade to Pro”, url=f”https://t.me/{admin}”)],
+[InlineKeyboardButton(“Reverse Image Search”, url=lens)],
+[InlineKeyboardButton(“Upgrade to Pro”, url=“https://t.me/” + admin)],
 ])
-
-# ══════════════════════════════════════════════════════════════════════════════
 
 # REPORT FORMATTER
 
-# ══════════════════════════════════════════════════════════════════════════════
-
 def format_private_report(p):
-return (
-f”🔒 **Private Account**\n\n”
-f”👤 **Name:** {p.get(‘full_name’, ‘N/A’)}\n”
-f”📛 **Username:** @{p.get(‘username’, ‘N/A’)}\n”
-f”👥 **Followers:** {p.get(‘followers’, 0):,}\n”
-f”📝 **Bio:** {p.get(‘bio’, ‘N/A’)}\n\n”
-f”⚠️ This account is **Private**. Full analytics require a public profile.”
-)
+lines = [
+“**Private Account**\n”,
+“**Name:** “ + str(p.get(“full_name”, “N/A”)),
+“**Username:** @” + str(p.get(“username”, “N/A”)),
+“**Followers:** “ + str(p.get(“followers”, 0)),
+“**Bio:** “ + str(p.get(“bio”, “N/A”)),
+“\nThis account is Private. Full analytics require a public profile.”,
+]
+return “\n”.join(lines)
 
 def format_full_report(p):
 username  = p.get(“username”, “N/A”)
@@ -414,54 +379,59 @@ cp        = check_all_platforms(username)
 
 ```
 n = p.get("post_count", 0)
-if n == 0:       freq = "👻 Ghost Account"
-elif n < 10:     freq = "🐢 Low Activity"
-elif n < 100:    freq = "📅 Moderate"
-else:            freq = "🚀 Very Active"
+if n == 0:
+    freq = "Ghost Account"
+elif n < 10:
+    freq = "Low Activity"
+elif n < 100:
+    freq = "Moderate"
+else:
+    freq = "Very Active"
 
-top = "\n".join(
-    f"  {i+1}. [{posts[i]['likes']:,}❤️ {posts[i]['comments']:,}💬]({posts[i]['url']})"
-    for i in range(min(3, len(posts)))
-) or "  No posts available."
+top_lines = []
+for i in range(min(3, len(posts))):
+    top_lines.append(
+        "  " + str(i+1) + ". [" + str(posts[i]["likes"]) + " likes " +
+        str(posts[i]["comments"]) + " comments](" + posts[i]["url"] + ")"
+    )
+top = "\n".join(top_lines) if top_lines else "  No posts available."
 
-cp_str = "\n".join(
-    f"  {r['status']} **{r['name']}** — [Link]({r['url']})" for r in cp
-)
+cp_lines = []
+for r in cp:
+    cp_lines.append("  " + r["status"] + " **" + r["name"] + "** - [Link](" + r["url"] + ")")
+cp_str = "\n".join(cp_lines)
+
+bio_text = (p.get("bio") or "-")[:200]
+ext_url  = p.get("external_url") or "-"
 
 text = (
-    f"📊 **Instagram OSINT Report**\n"
-    f"━━━━━━━━━━━━━━━━━━━━\n\n"
-    f"**👤 Profile**\n"
-    f"• Name: {p.get('full_name', 'N/A')}\n"
-    f"• Username: [@{username}](https://instagram.com/{username})\n"
-    f"• Verified: {'✅' if p.get('is_verified') else '❌'}\n"
-    f"• Category: {p.get('category', 'N/A')}\n"
-    f"• Bio: {(p.get('bio') or '—')[:200]}\n"
-    f"• Link: {p.get('external_url') or '—'}\n\n"
-    f"**📈 Stats**\n"
-    f"• Followers: {followers:,}  |  Following: {p.get('following', 0):,}\n"
-    f"• Posts: {n:,}  |  Activity: {freq}\n\n"
-    f"**🔬 Fake Analysis** (last 10 posts)\n"
-    f"• Avg Likes: {p.get('avg_likes', 0):,}  |  Avg Comments: {p.get('avg_comments', 0):,}\n"
-    f"• Engagement: {fake['rate']}% — {fake['label']}\n"
-    f"• Like Ratio: {fake['like_ratio']}\n"
-    f"• Comments: {fake['comment']}\n\n"
-    f"**🏆 Top Posts**\n{top}\n\n"
-    f"**🌐 Cross-Platform**\n{cp_str}\n\n"
-    f"━━━━━━━━━━━━━━━━━━━━"
+    "**Instagram OSINT Report**\n"
+    "--------------------\n\n"
+    "**Profile**\n"
+    "Name: " + str(p.get("full_name", "N/A")) + "\n"
+    "Username: @" + username + "\n"
+    "Verified: " + ("Yes" if p.get("is_verified") else "No") + "\n"
+    "Category: " + str(p.get("category", "N/A")) + "\n"
+    "Bio: " + bio_text + "\n"
+    "Link: " + ext_url + "\n\n"
+    "**Stats**\n"
+    "Followers: " + str(followers) + "  |  Following: " + str(p.get("following", 0)) + "\n"
+    "Posts: " + str(n) + "  |  Activity: " + freq + "\n\n"
+    "**Fake Analysis** (last 10 posts)\n"
+    "Avg Likes: " + str(p.get("avg_likes", 0)) + "  |  Avg Comments: " + str(p.get("avg_comments", 0)) + "\n"
+    "Engagement: " + str(fake["rate"]) + "% - " + fake["label"] + "\n"
+    "Like Ratio: " + fake["like_ratio"] + "\n"
+    "Comments: " + fake["comment"] + "\n\n"
+    "**Top Posts**\n" + top + "\n\n"
+    "**Cross-Platform**\n" + cp_str + "\n\n"
+    "--------------------"
 )
 return text, p.get("profile_pic_url", "")
 ```
 
-# ══════════════════════════════════════════════════════════════════════════════
-
 # BOT APP
 
-# ══════════════════════════════════════════════════════════════════════════════
-
 app = Client(“instagram_osint_bot”, api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-# ── Helpers ────────────────────────────────────────────────────────────────
 
 async def check_force_join(client, user_id):
 try:
@@ -470,7 +440,7 @@ return m.status.name not in (“BANNED”, “LEFT”, “RESTRICTED”)
 except UserNotParticipant:
 return False
 except Exception:
-return True  # fail open
+return True
 
 def admin_only(func):
 async def wrapper(client, message):
@@ -479,53 +449,45 @@ return
 await func(client, message)
 return wrapper
 
-# ── /start ─────────────────────────────────────────────────────────────────
-
 @app.on_message(filters.command(“start”) & filters.private)
 async def cmd_start(client, message: Message):
 user = message.from_user
 if not await check_force_join(client, user.id):
 await message.reply_text(
-“👋 **Welcome!**\n\nJoin our channel first, then send /start again.”,
+“**Welcome!**\n\nJoin our channel first, then send /start again.”,
 reply_markup=kb_join()
 )
 return
 await get_or_create_user(user.id, user.username, user.first_name)
 await message.reply_text(
-f”🕵️ **Instagram OSINT Bot**\n\n”
-f”Hello {user.first_name}! Send any Instagram username for a deep-dive report.\n\n”
-f”**Example:** `@cristiano`\n\n”
-f”🎁 You get **1 free search**. Upgrade to Pro for unlimited.\n\n”
-f”/help — How to use  |  /status — Your plan”
+“**Instagram OSINT Bot**\n\n”
+“Hello “ + user.first_name + “! Send any Instagram username for a deep-dive report.\n\n”
+“**Example:** `@cristiano`\n\n”
+“You get **1 free search**. Upgrade to Pro for unlimited.\n\n”
+“/help - How to use  |  /status - Your plan”
 )
-
-# ── /help ──────────────────────────────────────────────────────────────────
 
 @app.on_message(filters.command(“help”) & filters.private)
 async def cmd_help(client, message: Message):
 await message.reply_text(
-“**📖 How to use**\n\n”
-“1️⃣ Send any Instagram username (with or without @)\n”
-“2️⃣ The bot analyses the public profile\n”
-“3️⃣ You get engagement stats, fake detection & cross-platform check\n\n”
-“🔒 Private profiles show basic info only.\n”
-“🆓 Free users: 1 search  |  💎 Pro: Unlimited”
+“**How to use**\n\n”
+“1. Send any Instagram username (with or without @)\n”
+“2. The bot analyses the public profile\n”
+“3. You get engagement stats, fake detection & cross-platform check\n\n”
+“Private profiles show basic info only.\n”
+“Free users: 1 search  |  Pro: Unlimited”
 )
-
-# ── /status ────────────────────────────────────────────────────────────────
 
 @app.on_message(filters.command(“status”) & filters.private)
 async def cmd_status(client, message: Message):
 u = await get_user(message.from_user.id)
 if not u:
-await message.reply_text(“❌ Not registered. Send /start first.”)
+await message.reply_text(“Not registered. Send /start first.”)
 return
-plan = “💎 Pro (Unlimited)” if u[“is_premium”] else “🆓 Free”
+plan = “Pro (Unlimited)” if u[“is_premium”] else “Free”
 await message.reply_text(
-f”**Your Status**\n\n• Plan: {plan}\n• Searches Used: {u[‘search_count’]}”
+“**Your Status**\n\nPlan: “ + plan + “\nSearches Used: “ + str(u[“search_count”])
 )
-
-# ── Admin: /addpremium ─────────────────────────────────────────────────────
 
 @app.on_message(filters.command(“addpremium”) & filters.private)
 @admin_only
@@ -536,15 +498,13 @@ await message.reply_text(“Usage: /addpremium [user_id]”)
 return
 uid = int(parts[1])
 if await set_premium(uid, message.from_user.id):
-await message.reply_text(f”✅ User `{uid}` upgraded to Pro.”)
+await message.reply_text(“User “ + str(uid) + “ upgraded to Pro.”)
 try:
-await client.send_message(uid, “🎉 Your account is now **Pro**! Enjoy unlimited searches.”)
+await client.send_message(uid, “Your account is now Pro! Enjoy unlimited searches.”)
 except Exception:
 pass
 else:
-await message.reply_text(f”❌ User `{uid}` not found.”)
-
-# ── Admin: /removepremium ──────────────────────────────────────────────────
+await message.reply_text(“User “ + str(uid) + “ not found.”)
 
 @app.on_message(filters.command(“removepremium”) & filters.private)
 @admin_only
@@ -555,11 +515,9 @@ await message.reply_text(“Usage: /removepremium [user_id]”)
 return
 uid = int(parts[1])
 if await revoke_premium(uid):
-await message.reply_text(f”✅ Pro revoked for `{uid}`.”)
+await message.reply_text(“Pro revoked for “ + str(uid) + “.”)
 else:
-await message.reply_text(f”❌ User `{uid}` not found.”)
-
-# ── Admin: /userinfo ───────────────────────────────────────────────────────
+await message.reply_text(“User “ + str(uid) + “ not found.”)
 
 @app.on_message(filters.command(“userinfo”) & filters.private)
 @admin_only
@@ -570,32 +528,31 @@ await message.reply_text(“Usage: /userinfo [user_id]”)
 return
 u = await get_user(int(parts[1]))
 if not u:
-await message.reply_text(“❌ User not found.”)
+await message.reply_text(“User not found.”)
 return
-plan   = “💎 Pro” if u[“is_premium”] else “🆓 Free”
+plan   = “Pro” if u[“is_premium”] else “Free”
 joined = u[“joined_at”].strftime(”%Y-%m-%d”) if u.get(“joined_at”) else “N/A”
 last   = u[“last_search_at”].strftime(”%Y-%m-%d %H:%M”) if u.get(“last_search_at”) else “Never”
 await message.reply_text(
-f”**User Info**\n\n”
-f”• ID: `{u['user_id']}`\n• Name: {u.get(‘first_name’, ‘N/A’)}\n”
-f”• Plan: {plan}\n• Searches: {u[‘search_count’]}\n”
-f”• Joined: {joined}\n• Last Search: {last}”
+“**User Info**\n\n”
+“ID: “ + str(u[“user_id”]) + “\n”
+“Name: “ + str(u.get(“first_name”, “N/A”)) + “\n”
+“Plan: “ + plan + “\n”
+“Searches: “ + str(u[“search_count”]) + “\n”
+“Joined: “ + joined + “\n”
+“Last Search: “ + last
 )
-
-# ── Admin: /stats ──────────────────────────────────────────────────────────
 
 @app.on_message(filters.command(“stats”) & filters.private)
 @admin_only
 async def cmd_stats(client, message: Message):
 s = await get_stats()
 await message.reply_text(
-f”**📊 Bot Stats**\n\n”
-f”• Total Users: {s[‘total’]:,}\n”
-f”• Pro: {s[‘premium’]:,}\n”
-f”• Free: {s[‘free’]:,}”
+“**Bot Stats**\n\n”
+“Total Users: “ + str(s[“total”]) + “\n”
+“Pro: “ + str(s[“premium”]) + “\n”
+“Free: “ + str(s[“free”])
 )
-
-# ── Admin: /broadcast ──────────────────────────────────────────────────────
 
 @app.on_message(filters.command(“broadcast”) & filters.private)
 @admin_only
@@ -607,16 +564,14 @@ return
 text  = parts[1]
 users = await get_all_users()
 sent, failed = 0, 0
-msg = await message.reply_text(f”📢 Sending to {len(users)} users…”)
+msg = await message.reply_text(“Sending to “ + str(len(users)) + “ users…”)
 for u in users:
 try:
 await client.send_message(u[“user_id”], text)
 sent += 1
 except Exception:
 failed += 1
-await msg.edit_text(f”✅ Done.\n\n• Sent: {sent}\n• Failed: {failed}”)
-
-# ── Main search handler ────────────────────────────────────────────────────
+await msg.edit_text(“Done.\n\nSent: “ + str(sent) + “\nFailed: “ + str(failed))
 
 IG_RE = re.compile(r”^@?[A-Za-z0-9_.]{1,30}$”)
 
@@ -627,40 +582,39 @@ filters.text & filters.private &
 async def handle_search(client, message: Message):
 raw = message.text.strip()
 if not IG_RE.match(raw):
-await message.reply_text(“❓ Send a valid Instagram username. Example: `@username`”)
+await message.reply_text(“Send a valid Instagram username. Example: @username”)
 return
 
 ```
 user = message.from_user
 
 if not await check_force_join(client, user.id):
-    await message.reply_text("⚠️ Join our channel first.", reply_markup=kb_join())
+    await message.reply_text("Join our channel first.", reply_markup=kb_join())
     return
 
 user_data = await get_or_create_user(user.id, user.username, user.first_name)
 
 if not user_data["is_premium"] and user_data["search_count"] >= FREE_SEARCH_LIMIT:
     await message.reply_text(
-        f"🚫 **Free Limit Reached!**\n\n"
-        f"You've used your {FREE_SEARCH_LIMIT} free search(es).\n"
-        f"Upgrade to Pro for unlimited access.\n"
-        f"👤 Contact: {ADMIN_USERNAME}",
+        "**Free Limit Reached!**\n\n"
+        "You have used your " + str(FREE_SEARCH_LIMIT) + " free search(es).\n"
+        "Upgrade to Pro for unlimited access.\n"
+        "Contact: " + ADMIN_USERNAME,
         reply_markup=kb_admin()
     )
     return
 
 ig_username = raw.lstrip("@").strip()
-status_msg  = await message.reply_text(f"🔍 Analysing `@{ig_username}`... Please wait.")
+status_msg  = await message.reply_text("Analysing @" + ig_username + "... Please wait.")
 
-# Run blocking scrape in a thread so it doesn't freeze the bot
 loop = asyncio.get_event_loop()
 profile = await loop.run_in_executor(None, fetch_instagram_profile, ig_username)
 
 if not profile:
     await status_msg.edit_text(
-        f"❌ **Not Found**\n\n"
-        f"`@{ig_username}` doesn't exist or Instagram is temporarily blocking requests.\n"
-        f"Please try again in a few minutes."
+        "Not Found\n\n"
+        "@" + ig_username + " does not exist or Instagram is temporarily blocking requests.\n"
+        "Please try again in a few minutes."
     )
     return
 
@@ -674,21 +628,17 @@ if profile.get("is_private"):
 report, pic_url = format_full_report(profile)
 await status_msg.delete()
 await message.reply_text(report, reply_markup=kb_report(pic_url), disable_web_page_preview=True)
-await log_search(user.id, ig_username, "public", f"ER: {profile.get('avg_likes', 0)} avg likes")
+await log_search(user.id, ig_username, "public", "ER: " + str(profile.get("avg_likes", 0)) + " avg likes")
 ```
 
-# ══════════════════════════════════════════════════════════════════════════════
-
-# ENTRY POINT — FIXED
-
-# ══════════════════════════════════════════════════════════════════════════════
+# ENTRY POINT
 
 async def main():
 await connect_db()
 print(”[Bot] Starting…”)
 await app.start()
 print(”[Bot] Running. Ctrl+C to stop.”)
-await idle()          # ← correct way to keep Pyrogram alive
+await idle()
 await app.stop()
 await close_db()
 
